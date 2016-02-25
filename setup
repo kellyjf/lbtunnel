@@ -1,0 +1,66 @@
+#! /bin/bash
+
+
+for ns in lb v1 v2; do 
+	ip netns del $ns > /dev/null 2>&1
+	ip netns add $ns
+	ip link add $ns-out type veth peer name $ns-in 
+	ip link set $ns-in netns $ns name eth0 up
+done
+ip link set v1-out netns lb name eth1 up
+ip link set v2-out netns lb name eth2 up
+
+ip netns del dc > /dev/null 2>&1
+ip netns add dc 
+for ns in  v1 v2; do 
+	ip link add $ns-out type veth peer name $ns-in 
+	ip link set $ns-in netns $ns name eth1 up
+	ip link set $ns-out netns dc name $ns up
+done
+
+LB="ip netns exec lb "
+V1="ip netns exec v1 "
+V2="ip netns exec v2 "
+DC="ip netns exec dc "
+
+$LB ip addr add 172.20.40.1/24 dev eth0
+$LB ip addr add 192.168.2.13/30 dev eth1
+$LB ip addr add 192.168.2.17/30 dev eth2
+$LB iptables -t nat -A POSTROUTING -o eth1 -j SNAT --to-source 192.168.2.13
+$LB iptables -t nat -A POSTROUTING -o eth2 -j SNAT --to-source 192.168.2.17
+$LB ip route add 192.168.2.4/30 via 192.168.2.14 
+$LB ip route add 192.168.2.8/30  via 192.168.2.18
+
+$V1 ip addr add 192.168.2.14/30 dev eth0
+$V1 ip addr add 192.168.2.5/30 dev eth1
+$V1 iptables -t nat -A POSTROUTING -o eth1 -j SNAT --to-source 192.168.2.5
+
+$V2 ip addr add 192.168.2.18/30 dev eth0
+$V2 ip addr add 192.168.2.6/30 dev eth1
+$V2 iptables -t nat -A POSTROUTING -o eth1 -j SNAT --to-source 192.168.2.6
+
+$DC ip addr add 192.168.2.6/30 dev v1
+$DC ip addr add 192.168.2.10/30 dev v2
+
+echo LB; $LB ip addr ls
+echo V1; $V1 ip addr ls
+echo V2; $V2 ip addr ls
+echo DC; $DC ip addr ls
+
+ip link set lb-out up
+ip addr add 172.20.40.2/24 dev lb-out
+ip route add 192.168.2.0/24 via 172.20.40.1
+
+sed -i -e '/tov/d' /etc/iproute2/rt_tables
+echo 211 tov1 >>  /etc/iproute2/rt_tables
+echo 212 tov2 >>  /etc/iproute2/rt_tables
+
+$LB ip rule add fwmark 211 table tov1 
+$LB ip rule add fwmark 212 table tov2 
+$LB ip route add default via 192.168.2.14 table tov1
+$LB ip route add default via 192.168.2.18 table tov2
+$LB iptables -t mangle -A PREROUTING -i eth0 -p tcp -j MARK --set-mark 211 
+$LB iptables -t mangle -A PREROUTING -i eth0 -p udp -j MARK --set-mark 212 
+
+$V1 iptables -t nat -A PREROUTING -i eth0 -p tcp -j REDIRECT --to-ports 8001 
+$V2 iptables -t nat -A PREROUTING -i eth0 -p tcp -j REDIRECT --to-ports 8001 
