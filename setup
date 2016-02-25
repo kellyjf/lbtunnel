@@ -47,9 +47,9 @@ $V2 ip route add default via 192.168.2.10
 
 $LB iptables -t nat -A POSTROUTING -j MASQUERADE -o eth1
 $LB iptables -t nat -A POSTROUTING -j MASQUERADE -o eth2
-$V1 iptables -t nat -A POSTROUTING -j MASQUERADE -o eth0
+#$V1 iptables -t nat -A POSTROUTING -j MASQUERADE -o eth0
 $V1 iptables -t nat -A POSTROUTING -j MASQUERADE -o eth1
-$V2 iptables -t nat -A POSTROUTING -j MASQUERADE -o eth0
+#$V2 iptables -t nat -A POSTROUTING -j MASQUERADE -o eth0
 $V2 iptables -t nat -A POSTROUTING -j MASQUERADE -o eth1
 
 #$LB ip route add 192.168.2.4/30 via 192.168.2.14 
@@ -83,11 +83,11 @@ $LB ip rule add fwmark 211 table tov1
 $LB ip rule add fwmark 212 table tov2 
 $LB ip route add default via 192.168.2.14 table tov1
 $LB ip route add default via 192.168.2.18 table tov2
-$LB iptables -t mangle -A PREROUTING -i eth0 -p tcp -j MARK --set-mark 211 
-$LB iptables -t mangle -A PREROUTING -i eth0        -j MARK --set-mark 212 
+$LB iptables -t mangle -A PREROUTING -i eth0 -p tcp -j MARK --set-mark 212 
+$LB iptables -t mangle -A PREROUTING -i eth0 \! -p tcp -j MARK --set-mark 211 
 
-$V1 iptables -t nat -A PREROUTING -i eth0 -p tcp -j REDIRECT --to-ports 8001 
-$V2 iptables -t nat -A PREROUTING -i eth0 -p tcp -j REDIRECT --to-ports 8001 
+$V1 iptables -t nat -A PREROUTING -i eth0 -p tcp --dport 443 -j REDIRECT --to-ports 8001 
+$V2 iptables -t nat -A PREROUTING -i eth0 -p tcp --dport 443 -j REDIRECT --to-ports 8001 
 
 $DC python dcend 
 

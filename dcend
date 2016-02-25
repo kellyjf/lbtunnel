@@ -1,15 +1,39 @@
 #! /usr/bin/python
 
 import socket
+import signal
+import threading
 
 
-tunnel=socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.getprotobyname("udp"))
-tunnel.bind(("192.168.3.1", 29301))
-while True:
-	(data,client)=tunnel.recvfrom(1024)
-	print "From :",client," Recv: ", data
-	tunnel.sendto(data,client)
-	client=None
+class Tunnel(threading.Thread):
+	def run(self):
+		self.s=socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.getprotobyname("udp"))
+		self.s.bind(("192.168.3.1", 29301))
+		while True:
+			(data,client)=self.s.recvfrom(1024)
+			print "TUNNEL - From :",client," Recv: ", data
+			self.s.sendto(data,client)
+			client=None
+
+class Web(threading.Thread):
+	def run(self):
+		self.s=socket.socket(socket.AF_INET, socket.SOCK_STREAM, socket.getprotobyname("tcp"))
+		self.s.bind(("192.168.3.1", 80))
+		self.s.listen(1)	
+		while True:
+			(c,client)=self.s.accept()
+			data=c.recv(1024)
+			print "WEB -  From :",client," Recv: ", data
+			c.send(data)
+			c.close()
 
 
+signal.signal(signal.SIGINT, signal.SIG_DFL)
+web=Web()
+tun=Tunnel()
+tun.start()
+web.start()
+
+tun.join()
+web.join()
 
