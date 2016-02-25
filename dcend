@@ -1,0 +1,15 @@
+#! /usr/bin/python
+
+import socket
+
+
+tunnel=socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.getprotobyname("udp"))
+tunnel.bind(("192.168.3.1", 29301))
+while True:
+	(data,client)=tunnel.recvfrom(1024)
+	print "From :",client," Recv: ", data
+	tunnel.sendto(data,client)
+	client=None
+
+
+
