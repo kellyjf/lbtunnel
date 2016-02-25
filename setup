@@ -86,8 +86,10 @@ $LB ip route add default via 192.168.2.18 table tov2
 $LB iptables -t mangle -A PREROUTING -i eth0 -p tcp -j MARK --set-mark 212 
 $LB iptables -t mangle -A PREROUTING -i eth0 \! -p tcp -j MARK --set-mark 211 
 
-$V1 iptables -t nat -A PREROUTING -i eth0 -p tcp --dport 443 -j REDIRECT --to-ports 8001 
-$V2 iptables -t nat -A PREROUTING -i eth0 -p tcp --dport 443 -j REDIRECT --to-ports 8001 
+$V1 iptables -t nat -A PREROUTING -i eth0 -p tcp --dports 20,21,25,443 -j REDIRECT --to-ports 8001 
+$V2 iptables -t nat -A PREROUTING -i eth0 -p tcp --dports 20,21,25,443 -j REDIRECT --to-ports 8001 
 
+$V1 python vent & 
+$V2 python vent & 
 $DC python dcend 
 
