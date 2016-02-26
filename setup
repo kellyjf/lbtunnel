@@ -88,6 +88,9 @@ done
 #  represent "The Internet".  We'll run test
 #  services here at the next hop off the aircards
 
+
+# -------------- Load Balancer --------------------
+
 # Load balancer link to Jaguar 
 ip link set lb-out up
 ip addr add 172.20.40.2/24 dev lb-out
@@ -105,6 +108,7 @@ $V1 ip addr add 192.168.2.14/30 dev eth0
 $LB ip addr add 192.168.2.17/30 dev eth2
 $V2 ip addr add 192.168.2.18/30 dev eth0
 
+# -------------- Venturi Namespaces --------------------
 
 #
 # Venturi 1 wrapper for aircard1 
@@ -128,16 +132,10 @@ $DC ip addr add 192.168.2.10/30 dev v2
 ####################################################### 
 
 # -------------- Load Balancer --------------------
-# Set multiple default routes from load balancer
-# to the venturi wrapped aircards
-# Firewall marks will select a unique default route
-# in an alternate routing table.  These routes
-# back up in case of a mangle table miss, and 
-# are needed to get through reverse path filters
 
-#$LB ip route add default via 192.168.2.14
-#$LB ip route add default via 192.168.2.18 metric 10
-
+# For namespaces with multiple default routes in 
+# use, we must defeat reverse path filtering.
+# This is only necessary in the load balancer.
 for intf  in  eth1 eth2 all default ; do
 	$LB bash -c "echo 0 > /proc/sys/net/ipv4/conf/$intf/rp_filter"
 done
@@ -161,7 +159,7 @@ $LB ip rule add fwmark 212 table tov2
 
 
 # -------------- Venturi Namespaces --------------------
-#
+
 # In venturi wrappers, default is to the aircards
 #
 $V1 ip route add default via 192.168.2.6 
@@ -194,8 +192,9 @@ $V2 iptables -t nat -A POSTROUTING -j MASQUERADE -o eth1
 
 #  Set route to "The Internet" vi lb-out
 ip route add 192.168.3.0/24 via 172.20.40.1
+
 #  For connectivity tests to "aircards"
-ip route add 192.168.2.0/24 via 172.20.40.1
+# ip route add 192.168.2.0/24 via 172.20.40.1
 
 #in_each_ns ip route ls
 
@@ -219,10 +218,10 @@ $V2 python vent &
 
 
 # The load balancer, in communiction with Venturi software would 
-# maintain the mangle table on a per-stream basis
+# maintain the mangle table on a per-stream basis.
+# Here, we just point all traffic to v1
 #
-$LB iptables -t mangle -A PREROUTING -i eth0 \! -p tcp -j MARK --set-mark 211 
-$LB iptables -t mangle -A PREROUTING -i eth0    -p tcp -j MARK --set-mark 212 
+$LB iptables -t mangle -A PREROUTING -i eth0  -p tcp -j MARK --set-mark 211 
 
 
 #
@@ -231,4 +230,58 @@ $LB iptables -t mangle -A PREROUTING -i eth0    -p tcp -j MARK --set-mark 212
 #
 $V1 iptables -t nat -A PREROUTING -i eth0 -p tcp --match multiport --dports 20,21,25,80 -j REDIRECT --to-ports 8001 
 $V2 iptables -t nat -A PREROUTING -i eth0 -p tcp --match multiport --dports 20,21,25,80 -j REDIRECT --to-ports 8001 
+
+#! /usr/bin/python
+
+import socket
+import signal
+import threading
+
+
+class Tunnel(threading.Thread):
+	def run(self):
+		self.s=socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.getprotobyname("udp"))
+		self.s.bind(("192.168.3.1", 29301))
+		while True:
+			(data,client)=self.s.recvfrom(1024)
+			print "TUNNEL - From :",client," Recv: ", data
+			self.s.sendto(data,client)
+			client=None
+
+class Web(threading.Thread):
+	def run(self):
+		self.s=socket.socket(socket.AF_INET, socket.SOCK_STREAM, socket.getprotobyname("tcp"))
+		self.s.bind(("192.168.3.1", 80))
+		self.s.listen(1)	
+		while True:
+			(c,client)=self.s.accept()
+			data=c.recv(1024)
+			print "WEB -  From :",client," Recv: ", data
+			c.send(data)
+			c.close()
+
+class EncWeb(threading.Thread):
+	def run(self):
+		self.s=socket.socket(socket.AF_INET, socket.SOCK_STREAM, socket.getprotobyname("tcp"))
+		self.s.bind(("192.168.3.1", 443))
+		self.s.listen(1)	
+		while True:
+			(c,client)=self.s.accept()
+			data=c.recv(1024)
+			print "HTTPS -  From :",client," Recv: ", data
+			c.send(data)
+			c.close()
+
+
+signal.signal(signal.SIGINT, signal.SIG_DFL)
+enc=EncWeb()
+web=Web()
+tun=Tunnel()
+tun.start()
+web.start()
+enc.start()
+
+tun.join()
+web.join()
+enc.join()
 
