@@ -24,7 +24,7 @@ function lbset {
 	case "$1" in
 	v1) $LB iptables -t mangle -A PREROUTING -i eth0    -p tcp -j MARK --set-mark 211 ;;
 	v2) $LB iptables -t mangle -A PREROUTING -i eth0    -p tcp -j MARK --set-mark 212 ;;
-	*)  echo "Usage $0: v1|v2 "; exit;;
+	*)  echo "Usage $0: v1|v2 "; return;;
 	esac
 }
 
@@ -37,7 +37,7 @@ function venturi {
 	case "$1" in 
 	v1)  EXEC=$V1 ;;
 	v2)  EXEC=$V2 ;;
-	*)  echo "Usage $0: v1|v2 up|down"; exit;;
+	*)  echo "Usage $0: v1|v2 up|down"; return;;
 	esac
 
 	
@@ -49,3 +49,14 @@ function venturi {
 }
 
 
+function testport {
+	ports="${@}"
+	if [ -z "$ports" ] ; then
+		ports="80 443"
+	fi
+	for port in $ports; do
+		echo
+		echo ==== Sending Hello to port $port ====
+		echo Hello | nc 192.168.3.1 $port
+	done
+}

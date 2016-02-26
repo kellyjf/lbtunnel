@@ -65,6 +65,9 @@ $DC ip addr add 192.168.3.1/32 dev lo
 #
 #  Connect the "datacenters" to the venturi namespaces
 #  through a veth pair that represents the aircard
+#  The near side of the aircard is put in the venutri
+#  namespace as eth1, the far end is put in the datacenter
+#  with an interface name that matches the venturi namespace
 #
 for ns in  v1 v2; do 
 	ip link add $ns-out type veth peer name $ns-in 
