@@ -1,57 +1,185 @@
 #! /bin/bash
 
 
+#
+#  Cleanup from previous runs
+# 
 ip link del lb-out > /dev/null 2>&1
 for ns in lb v1 v2 dc; do 
 	ip netns del $ns > /dev/null 2>&1
 done
 
+#
+#  If just cleaning, we're done
+# 
 case "$1" in 
 	cl*) exit ;;
 esac
 
+#
+# Save ourselves some typing
+#
+LB="ip netns exec lb "
+V1="ip netns exec v1 "
+V2="ip netns exec v2 "
+DC="ip netns exec dc "
+
+function in_each_ns {
+	for ns in lb v1 v2 dc ; do
+		echo -n "[$ns] "
+		ip netns exec $ns $"@"
+	done
+}
+
+#######################################################
+#
+#                Network Topology
+#
+#######################################################
+#
+#  Create the load balancer and two venturi name spaces
+#  Straddle each with a veth pair, calling the inside "eth0"
+#  and the outside $ns-out.  Bring all interfaces up
+#
 for ns in lb v1 v2; do 
 	ip netns add $ns
 	ip netns exec $ns ip link set lo up
 	ip link add $ns-out type veth peer name $ns-in 
 	ip link set $ns-in netns $ns name eth0 up
 done
+#
+#  Connect the venturi namespaces to the load balancer
+#  as eth1 and eth2
+#
 ip link set v1-out netns lb name eth1 up
 ip link set v2-out netns lb name eth2 up
 
-ip netns del dc > /dev/null 2>&1
+#
+# Add a "datacenter" namespace for demo purposes
+# Use it's loopback address to stand in for any
+# host on "The Internet"
 ip netns add dc 
-ip netns exec dc ip link set lo up
+$DC ip link set lo up
+$DC ip addr add 192.168.3.1/32 dev lo 
+
+#
+#  Connect the "datacenters" to the venturi namespaces
+#  through a veth pair that represents the aircard
+#
 for ns in  v1 v2; do 
 	ip link add $ns-out type veth peer name $ns-in 
 	ip link set $ns-in netns $ns name eth1 up
 	ip link set $ns-out netns dc name $ns up
 done
 
-LB="ip netns exec lb "
-V1="ip netns exec v1 "
-V2="ip netns exec v2 "
-DC="ip netns exec dc "
 
-$LB ip addr add 172.20.40.1/24 dev eth0
-$LB ip addr add 192.168.2.13/30 dev eth1
-$LB ip addr add 192.168.2.17/30 dev eth2
-
-$V1 ip addr add 192.168.2.14/30 dev eth0
-$V1 ip addr add 192.168.2.5/30 dev eth1
-$V1 ip route add default via 192.168.2.6 
+#######################################################
 #
+#                Network Addresses
+#
+#######################################################
+
+#  Address assigments.  Aircards and lb-out
+#  would be DHCP configured to these values
+#  In the dc namespace, we use 192.168.3.1 to 
+#  represent "The Internet".  We'll run test
+#  services here at the next hop off the aircards
+
+# Load balancer link to Jaguar 
+ip link set lb-out up
+ip addr add 172.20.40.2/24 dev lb-out
+$LB ip addr add 172.20.40.1/24 dev eth0
+
+#
+# Load balancer Link to Venturi 1
+#
+$LB ip addr add 192.168.2.13/30 dev eth1
+$V1 ip addr add 192.168.2.14/30 dev eth0
+
+#
+# Load balancer Link to Venturi 2
+#
+$LB ip addr add 192.168.2.17/30 dev eth2
 $V2 ip addr add 192.168.2.18/30 dev eth0
+
+
+#
+# Venturi 1 wrapper for aircard1 
+#
+$V1 ip addr add 192.168.2.5/30 dev eth1
+$DC ip addr add 192.168.2.6/30 dev v1
+
+#
+# Venturi 2 wrapper for aircard2 
+#
 $V2 ip addr add 192.168.2.9/30 dev eth1
+$DC ip addr add 192.168.2.10/30 dev v2
+
+
+#in_each_ns ip addr ls
+
+#######################################################
+#
+#                Network Routing
+#
+####################################################### 
+
+# -------------- Load Balancer --------------------
+# Set multiple default routes from load balancer
+# to the venturi wrapped aircards
+# Firewall marks will select a unique default route
+# in an alternate routing table.  These routes
+# back up in case of a mangle table miss, and 
+# are needed to get through reverse path filters
+
+#$LB ip route add default via 192.168.2.14
+#$LB ip route add default via 192.168.2.18 metric 10
+
+for intf  in  eth1 eth2 all default ; do
+	$LB bash -c "echo 0 > /proc/sys/net/ipv4/conf/$intf/rp_filter"
+done
+
+#
+#  Create two routing tables, one for each venturi-wrapped aircard.  
+#  Keep in mind this table is shared with the root NS
+#
+sed -i -e '/tov/d' /etc/iproute2/rt_tables
+echo 211 tov1 >>  /etc/iproute2/rt_tables
+$LB ip route add default via 192.168.2.14 table tov1
+echo 212 tov2 >>  /etc/iproute2/rt_tables
+$LB ip route add default via 192.168.2.18 table tov2
+
+#
+# Select routing table with fwmark.  
+#
+$LB ip rule add fwmark 211 table tov1 
+$LB ip rule add fwmark 212 table tov2 
+
+
+
+# -------------- Venturi Namespaces --------------------
+#
+# In venturi wrappers, default is to the aircards
+#
+$V1 ip route add default via 192.168.2.6 
 $V2 ip route add default via 192.168.2.10 
 
+#######################################################
+#
+#                Network Address Translation
+#
+####################################################### 
+#
+# Straight MASQ.  How to do 1-1 NAT instead?
+#
 $LB iptables -t nat -A POSTROUTING -j MASQUERADE -o eth1
 $LB iptables -t nat -A POSTROUTING -j MASQUERADE -o eth2
-#$V1 iptables -t nat -A POSTROUTING -j MASQUERADE -o eth0
 $V1 iptables -t nat -A POSTROUTING -j MASQUERADE -o eth1
-#$V2 iptables -t nat -A POSTROUTING -j MASQUERADE -o eth0
 $V2 iptables -t nat -A POSTROUTING -j MASQUERADE -o eth1
 
+#
+#  1-1 NAT prototyping
+#
 #$LB ip route add 192.168.2.4/30 via 192.168.2.14 
 #$LB ip route add 192.168.2.8/30  via 192.168.2.18
 #$V1 ip route add 172.20.40.0/24 via 192.168.2.13 dev eth0
@@ -61,35 +189,43 @@ $V2 iptables -t nat -A POSTROUTING -j MASQUERADE -o eth1
 #$V1 iptables -t nat -A POSTROUTING -o eth1 -j SNAT --to-source 192.168.2.5
 #$V2 iptables -t nat -A POSTROUTING -o eth1 -j SNAT --to-source 192.168.2.9
 
-$DC ip addr add 192.168.2.6/30 dev v1
-$DC ip addr add 192.168.2.10/30 dev v2
-$DC ip addr add 192.168.3.1/32 dev lo 
-
-echo LB; $LB ip addr ls
-echo V1; $V1 ip addr ls
-echo V2; $V2 ip addr ls
-echo DC; $DC ip addr ls
-
-ip link set lb-out up
-ip addr add 172.20.40.2/24 dev lb-out
-#ip route add 192.168.2.0/24 via 172.20.40.1
+#  Set route to "The Internet" vi lb-out
 ip route add 192.168.3.0/24 via 172.20.40.1
+#  For connectivity tests to "aircards"
+ip route add 192.168.2.0/24 via 172.20.40.1
 
-sed -i -e '/tov/d' /etc/iproute2/rt_tables
-echo 211 tov1 >>  /etc/iproute2/rt_tables
-echo 212 tov2 >>  /etc/iproute2/rt_tables
+#in_each_ns ip route ls
 
-$LB ip rule add fwmark 211 table tov1 
-$LB ip rule add fwmark 212 table tov2 
-$LB ip route add default via 192.168.2.14 table tov1
-$LB ip route add default via 192.168.2.18 table tov2
-$LB iptables -t mangle -A PREROUTING -i eth0 -p tcp -j MARK --set-mark 212 
-$LB iptables -t mangle -A PREROUTING -i eth0 \! -p tcp -j MARK --set-mark 211 
 
-$V1 iptables -t nat -A PREROUTING -i eth0 -p tcp --dports 20,21,25,443 -j REDIRECT --to-ports 8001 
-$V2 iptables -t nat -A PREROUTING -i eth0 -p tcp --dports 20,21,25,443 -j REDIRECT --to-ports 8001 
+#######################################################
+#
+#                Network Services
+#
+#######################################################
 
+#
+#  Start "Internet" service and tunnel backend 
+#
+$DC python dcend  &
+
+#
+#  Start the venturi simulators
+#
 $V1 python vent & 
 $V2 python vent & 
-$DC python dcend 
+
+
+# The load balancer, in communiction with Venturi software would 
+# maintain the mangle table on a per-stream basis
+#
+$LB iptables -t mangle -A PREROUTING -i eth0 \! -p tcp -j MARK --set-mark 211 
+$LB iptables -t mangle -A PREROUTING -i eth0    -p tcp -j MARK --set-mark 212 
+
+
+#
+# A service that pings hb.gogoinflight.com would divert or undivert 
+# selected traffic to the tunnels
+#
+$V1 iptables -t nat -A PREROUTING -i eth0 -p tcp --match multiport --dports 20,21,25,443 -j REDIRECT --to-ports 8001 
+$V2 iptables -t nat -A PREROUTING -i eth0 -p tcp --match multiport --dports 20,21,25,443 -j REDIRECT --to-ports 8001 
 

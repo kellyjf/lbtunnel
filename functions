@@ -1,0 +1,51 @@
+#! /bin/bash
+
+
+#
+# Save ourselves some typing
+#
+LB="ip netns exec lb "
+V1="ip netns exec v1 "
+V2="ip netns exec v2 "
+DC="ip netns exec dc "
+
+function in_each_ns {
+	for ns in lb v1 v2 dc ; do
+		echo " ====== [$ns] ======  "
+		ip netns exec $ns  "$@"
+	done
+}
+
+
+function lbset {
+
+	$LB iptables -t mangle -F PREROUTING 
+
+	case "$1" in
+	v1) $LB iptables -t mangle -A PREROUTING -i eth0    -p tcp -j MARK --set-mark 211 ;;
+	v2) $LB iptables -t mangle -A PREROUTING -i eth0    -p tcp -j MARK --set-mark 212 ;;
+	*)  echo "Usage $0: v1|v2 "; exit;;
+	esac
+}
+
+
+#
+# A service that pings hb.gogoinflight.com would divert or undivert 
+# selected traffic to the tunnels
+#
+function venturi {
+	case "$1" in 
+	v1)  EXEC=$V1 ;;
+	v2)  EXEC=$V2 ;;
+	*)  echo "Usage $0: v1|v2 up|down"; exit;;
+	esac
+
+	
+	$EXEC iptables -t nat -F PREROUTING
+		
+	case "$2" in
+	up) $EXEC iptables -t nat -A PREROUTING -i eth0 -p tcp --match multiport --dports 20,21,25,443 -j REDIRECT --to-ports 8001 ;;
+	esac
+}
+
+
