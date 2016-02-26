@@ -44,7 +44,7 @@ function venturi {
 	$EXEC iptables -t nat -F PREROUTING
 		
 	case "$2" in
-	up) $EXEC iptables -t nat -A PREROUTING -i eth0 -p tcp --match multiport --dports 20,21,25,443 -j REDIRECT --to-ports 8001 ;;
+	up) $EXEC iptables -t nat -A PREROUTING -i eth0 -p tcp --match multiport --dports 20,21,25,80 -j REDIRECT --to-ports 8001 ;;
 	esac
 }
 
